@@ -46,6 +46,9 @@
 
 /* CPU stack size */
 #ifdef WITH_WOLFSSL
+	/* Default option for wolfssl is Tom's fastmath with timing resistance
+     * which providers far greater security. This can be reduced to
+     * 65536 if not using TFM timing resistance. */
     #define DEFAULT_STACK_SIZE 131072
 #else
     #define DEFAULT_STACK_SIZE 65536
@@ -310,6 +313,7 @@ typedef int SOCKET;
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>     /* for aix */
 #endif
+#include <dirent.h>
 
 #if defined(HAVE_POLL) && !defined(BROKEN_POLL)
 #ifdef HAVE_POLL_H
@@ -338,6 +342,7 @@ typedef int SOCKET;
 #include <sys/uio.h>    /* struct iovec */
 #endif /* HAVE_SYS_UIO_H */
 
+/* BSD sockets */
 #include <netinet/in.h>  /* struct sockaddr_in */
 #include <sys/socket.h>  /* getpeername */
 #include <arpa/inet.h>   /* inet_ntoa */
@@ -398,8 +403,15 @@ extern char *sys_errlist[];
 #ifdef HAVE_SYS_SYSCALL_H
 #include <sys/syscall.h> /* SYS_gettid */
 #endif
+#ifdef HAVE_LINUX_SCHED_H
+#include <linux/sched.h> /* SCHED_BATCH */
+#endif
 
 #endif /* USE_WIN32 */
+
+#ifndef S_ISREG
+#define S_ISREG(m) (((m)&S_IFMT)==S_IFREG)
+#endif
 
 /**************************************** wolfSSL headers */
 #ifdef WITH_WOLFSSL
@@ -411,7 +423,6 @@ extern char *sys_errlist[];
 #include <wolfssl/wolfcrypt/dh.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #endif /* defined(WITH_WOLFSSL) */
-
 
 /**************************************** OpenSSL headers */
 
@@ -476,6 +487,7 @@ extern char *sys_errlist[];
 
 #include <openssl/lhash.h>
 #include <openssl/ssl.h>
+#include <openssl/ssl23.h>
 #include <openssl/ui.h>
 #include <openssl/err.h>
 #include <openssl/crypto.h> /* for CRYPTO_* and SSLeay_version */

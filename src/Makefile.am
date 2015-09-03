@@ -4,7 +4,7 @@
 common_headers = common.h prototypes.h version.h
 common_sources = tls.c str.c file.c client.c log.c options.c protocol.c
 common_sources += network.c resolver.c ssl.c ctx.c verify.c sthreads.c
-common_sources += fd.c stunnel.c
+common_sources += fd.c dhparam.c cron.c stunnel.c
 unix_sources = pty.c libwrap.c ui_unix.c
 shared_sources = env.c
 win32_gui_sources = ui_win_gui.c resources.h resources.rc
@@ -36,6 +36,14 @@ endif
 stunnel_CPPFLAGS += -DLIBDIR='"$(pkglibdir)"'
 stunnel_CPPFLAGS += -DCONFDIR='"$(sysconfdir)/stunnel"'
 
+# Generate a new set of DH parameters for each version
+dhparam.c: version.h
+	echo '#include "common.h"' >dhparam.c
+	echo '#ifndef OPENSSL_NO_DH' >>dhparam.c
+	echo '#define DN_new DH_new' >>dhparam.c
+	openssl dhparam -noout -C 2048 >>dhparam.c
+	echo '#endif /* OPENSSL_NO_DH */' >>dhparam.c
+
 # SSL library
 if WOLFSSL
 stunnel_LDFLAGS = -L$(SSLDIR)/lib64 -L$(SSLDIR)/lib -lwolfssl
@@ -45,8 +53,10 @@ endif
 
 # Win32 executables
 
+if AUTHOR_TESTS
 # Just check if the programs can be built, don't perform any actual tests
 check_PROGRAMS = stunnel.exe tstunnel.exe
+endif
 stunnel_exe_SOURCES = $(common_headers) $(common_sources) $(win32_gui_sources)
 tstunnel_exe_SOURCES = $(common_headers) $(common_sources) $(win32_cli_sources)
 
@@ -72,7 +82,7 @@ win32_cli_libs = $(win32_common_libs) $(win32_ssl_libs)
 
 win32_common_objs = tls.obj str.obj file.obj client.obj log.obj options.obj
 win32_common_objs += protocol.obj network.obj resolver.obj ssl.obj ctx.obj
-win32_common_objs += verify.obj sthreads.obj fd.obj dhparam.obj
+win32_common_objs += verify.obj sthreads.obj fd.obj dhparam.obj cron.obj
 win32_common_objs += stunnel.obj
 win32_gui_objs = ui_win_gui.obj resources.obj
 win32_cli_objs = ui_win_cli.obj
@@ -102,3 +112,8 @@ resources.obj: resources.rc resources.h version.h
 
 edit = sed \
 	-e 's|@bindir[@]|$(bindir)|g'
+
+stunnel3: Makefile
+	$(edit) '$(srcdir)/$@.in' >$@
+
+stunnel3: $(srcdir)/stunnel3.in

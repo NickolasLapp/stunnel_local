@@ -75,7 +75,7 @@ void s_poll_add(s_poll_set *fds, SOCKET fd, int rd, int wr) {
 
     for(i=0; i<fds->nfds && fds->ufds[i].fd!=fd; i++)
         ;
-    if(i==fds->nfds) {
+    if(i==fds->nfds) { /* not found */
         if(i==fds->allocated) {
             fds->allocated=i+1;
             s_poll_realloc(fds);
@@ -94,12 +94,24 @@ void s_poll_add(s_poll_set *fds, SOCKET fd, int rd, int wr) {
         fds->ufds[i].events|=POLLOUT;
 }
 
+void s_poll_remove(s_poll_set *fds, SOCKET fd) {
+    unsigned i;
+
+    for(i=0; i<fds->nfds && fds->ufds[i].fd!=fd; i++)
+        ;
+    if(i<fds->nfds) { /* found */
+        memmove(fds->ufds+i, fds->ufds+i+1,
+            (fds->nfds-i-1)*sizeof(struct pollfd));
+        fds->nfds--;
+    }
+}
+
 int s_poll_canread(s_poll_set *fds, SOCKET fd) {
     unsigned i;
 
     for(i=0; i<fds->nfds; i++)
         if(fds->ufds[i].fd==fd)
-            return fds->ufds[i].revents&POLLIN;
+            return fds->ufds[i].revents&(POLLIN|POLLERR);
     return 0; /* not listed in fds */
 }
 
@@ -108,7 +120,7 @@ int s_poll_canwrite(s_poll_set *fds, SOCKET fd) {
 
     for(i=0; i<fds->nfds; i++)
         if(fds->ufds[i].fd==fd)
-            return fds->ufds[i].revents&POLLOUT;
+            return fds->ufds[i].revents&(POLLOUT|POLLERR);
     return 0; /* not listed in fds */
 }
 
@@ -140,6 +152,14 @@ NOEXPORT void s_poll_realloc(s_poll_set *fds) {
     fds->ufds=str_realloc(fds->ufds, fds->allocated*sizeof(struct pollfd));
 }
 
+void s_poll_dump(s_poll_set *fds, int level) {
+    unsigned i;
+
+    for(i=0; i<fds->nfds; i++)
+        s_log(level, "fd=%d events=0x%X revents=0x%X",
+            fds->ufds[i].fd, fds->ufds[i].events, fds->ufds[i].revents);
+}
+
 #ifdef USE_UCONTEXT
 
 /* move ready contexts from waiting queue to ready queue */
@@ -154,13 +174,14 @@ NOEXPORT void scan_waiting_queue(void) {
 
     time(&now);
     /* count file descriptors */
-    min_timeout=-1;
+    min_timeout=-1; /* infinity */
     nfds=0;
     for(context=waiting_head; context; context=context->next) {
         nfds+=context->fds->nfds;
         if(context->finish>=0) /* finite time */
             if(min_timeout<0 || min_timeout>context->finish-now)
-                min_timeout=context->finish-now<0 ? 0 : context->finish-now;
+                min_timeout=
+                    (int)(context->finish-now<0 ? 0 : context->finish-now);
     }
     /* setup ufds structure */
     if(nfds>max_nfds) { /* need to allocate more memory */
@@ -349,21 +370,27 @@ void s_poll_add(s_poll_set *fds, SOCKET fd, int rd, int wr) {
     }
 #endif
     if(rd)
-        FD_SET((unsigned)fd, fds->irfds);
+        FD_SET(fd, fds->irfds);
     if(wr)
-        FD_SET((unsigned)fd, fds->iwfds);
+        FD_SET(fd, fds->iwfds);
     /* always expect errors (and the Spanish Inquisition) */
-    FD_SET((unsigned)fd, fds->ixfds);
+    FD_SET(fd, fds->ixfds);
     if(fd>fds->max)
         fds->max=fd;
 }
 
+void s_poll_remove(s_poll_set *fds, SOCKET fd) {
+    FD_CLR(fd, fds->irfds);
+    FD_CLR(fd, fds->iwfds);
+    FD_CLR(fd, fds->ixfds);
+}
+
 int s_poll_canread(s_poll_set *fds, SOCKET fd) {
-    return FD_ISSET(fd, fds->orfds);
+    return FD_ISSET(fd, fds->orfds) || FD_ISSET(fd, fds->oxfds);
 }
 
 int s_poll_canwrite(s_poll_set *fds, SOCKET fd) {
-    return FD_ISSET(fd, fds->owfds);
+    return FD_ISSET(fd, fds->owfds) || FD_ISSET(fd, fds->oxfds);
 }
 
 int s_poll_hup(s_poll_set *fds, SOCKET fd) {
@@ -412,6 +439,24 @@ NOEXPORT void s_poll_realloc(s_poll_set *fds) {
     fds->orfds=str_realloc(fds->orfds, FD_SIZE(fds));
     fds->owfds=str_realloc(fds->owfds, FD_SIZE(fds));
     fds->oxfds=str_realloc(fds->oxfds, FD_SIZE(fds));
+}
+
+void s_poll_dump(s_poll_set *fds, int level) {
+    SOCKET fd;
+    int ir, iw, ix, or, ow, ox;
+
+    for(fd=0; fd<fds->max; fd++) {
+        ir=FD_ISSET(fd, fds->irfds);
+        iw=FD_ISSET(fd, fds->iwfds);
+        ix=FD_ISSET(fd, fds->ixfds);
+        or=FD_ISSET(fd, fds->orfds);
+        ow=FD_ISSET(fd, fds->owfds);
+        ox=FD_ISSET(fd, fds->oxfds);
+        if(ir || iw || ix || or || ow || ox)
+            s_log(level, "fd=%d ifds=%c%c%c ofds=%c%c%c", fd,
+                ir?'r':'-', iw?'w':'-', ix?'x':'-',
+                or?'r':'-', ow?'w':'-', ox?'x':'-');
+    }
 }
 
 #endif /* USE_POLL */
@@ -482,7 +527,7 @@ int s_connect(CLI *c, SOCKADDR_UNION *addr, socklen_t addrlen) {
     s_log(LOG_INFO, "s_connect: connecting %s", dst);
 
     if(!connect(c->fd, &addr->sa, addrlen)) {
-        s_log(LOG_NOTICE, "s_connect: connected %s", dst);
+        s_log(LOG_INFO, "s_connect: connected %s", dst);
         str_free(dst);
         return 0; /* no error -> success (on some OSes over the loopback) */
     }

@@ -36,7 +36,7 @@ sign: dist
 	sha256sum $(distdir).tar.gz >../dist/$(distdir).tar.gz.sha256
 	sha256sum $(distdir)-installer.exe >../dist/$(distdir)-installer.exe.sha256
 	sha256sum $(distdir)-android.zip >../dist/$(distdir)-android.zip.sha256
-	cat ../dist/$(distdir)*.sha256
+	cat ../dist/$(distdir)*.sha256 | tac
 
 cert:
 	$(MAKE) -C tools cert
@@ -46,3 +46,11 @@ install-data-hook:
 	@echo "* Type 'make cert' to also install a sample certificate *"
 	@echo "*********************************************************"
 
+edit = sed \
+	-e 's|@bindir[@]|$(bindir)|g' \
+	-e 's|@sysconfdir[@]|$(sysconfdir)|g'
+
+stunnel.pod: Makefile
+	$(edit) '$(srcdir)/$@.in' >$@
+
+stunnel.pod: $(srcdir)/stunnel.pod

@@ -107,7 +107,7 @@ void *client_thread(void *arg) {
 void client_main(CLI *c) {
     s_log(LOG_DEBUG, "Service [%s] started", c->opt->servname);
     if(c->opt->exec_name && c->opt->connect_addr.names) {
-            /* exec and connect options specified together
+            /* exec+connect options specified together
              * -> spawn a local program instead of stdio */
         for(;;) {
             SERVICE_OPTIONS *opt=c->opt;
@@ -165,7 +165,7 @@ NOEXPORT void client_run(CLI *c) {
         c->ssl_wfd=&(c->local_wfd);
     }
     c->fds=s_poll_alloc();
-    addrlist_clear(&c->connect_addr);
+    addrlist_clear(&c->connect_addr, 0);
 
         /* try to process the request */
     err=setjmp(c->err);
@@ -335,19 +335,10 @@ NOEXPORT void remote_start(CLI *c) {
         c->bind_addr=NULL; /* don't bind */
 
     /* setup c->remote_fd, now */
-    if(c->opt->connect_addr.names
-#ifndef USE_WIN32
-                || c->opt->option.transparent_dst
-#endif
-            ) {
-        /* try remote first for exec+connect targets */
+    if(c->opt->exec_name && !c->opt->connect_addr.names)
+        c->remote_fd.fd=connect_local(c); /* not for exec+connect targets */
+    else
         c->remote_fd.fd=connect_remote(c);
-    } else if(c->opt->exec_name) { /* exec+connect uses local fd */
-        c->remote_fd.fd=connect_local(c);
-    } else {
-        s_log(LOG_ERR, "INTERNAL ERROR: No target for remote socket");
-        longjmp(c->err, 1);
-    }
 
     c->remote_fd.is_socket=1; /* always! */
     s_log(LOG_DEBUG, "Remote socket (FD=%d) initialized", c->remote_fd.fd);
@@ -662,6 +653,7 @@ NOEXPORT void transfer(CLI *c) {
         if(!(sock_can_rd || sock_can_wr || ssl_can_rd || ssl_can_wr)) {
             s_log(LOG_ERR, "INTERNAL ERROR: "
                 "s_poll_wait returned %d, but no descriptor is ready", err);
+            s_poll_dump(c->fds, LOG_ERR);
             longjmp(c->err, 1);
         }
 
@@ -828,8 +820,10 @@ NOEXPORT void transfer(CLI *c) {
                 s_log(LOG_DEBUG, "SSL_read returned WANT_WRITE: retrying");
                 read_wants_write=1;
                 break;
-            case SSL_ERROR_WANT_READ: /* is it possible? */
+            case SSL_ERROR_WANT_READ: /* happens quite often */
+#if 0
                 s_log(LOG_DEBUG, "SSL_read returned WANT_READ: retrying");
+#endif
                 read_wants_read=1;
                 break;
             case SSL_ERROR_WANT_X509_LOOKUP:
@@ -1245,11 +1239,16 @@ NOEXPORT SOCKET connect_remote(CLI *c) {
     unsigned ind_start, ind_try, ind_cur;
 
     setup_connect_addr(c);
-    if(!c->connect_addr.num) {
-        s_log(LOG_ERR, "No host resolved");
+    switch(c->connect_addr.num) {
+    case 0:
+        s_log(LOG_ERR, "No remote host resolved");
         longjmp(c->err, 1);
+    case 1:
+        ind_start=0;
+        break;
+    default:
+        ind_start=connect_index(c);
     }
-    ind_start=connect_index(c);
 
     /* try to connect each host from the list */
     for(ind_try=0; ind_try<c->connect_addr.num; ind_try++) {
@@ -1282,11 +1281,16 @@ NOEXPORT SOCKET connect_remote(CLI *c) {
 NOEXPORT void connect_cache(SSL_SESSION *sess, SOCKADDR_UNION *cur_addr) {
     SOCKADDR_UNION *old_addr, *new_addr;
     socklen_t len;
+    char *addr_txt;
 
     /* make a copy of the address, so it may work with delayed resolver */
     len=addr_len(cur_addr);
     new_addr=str_alloc_detached((size_t)len);
     memcpy(new_addr, cur_addr, (size_t)len);
+
+    addr_txt=s_ntop(cur_addr, len);
+    s_log(LOG_INFO, "persistence: %s cached", addr_txt);
+    str_free(addr_txt);
 
     enter_critical_section(CRIT_ADDR);
     old_addr=SSL_SESSION_get_ex_data(sess, index_addr);
@@ -1299,35 +1303,43 @@ NOEXPORT unsigned connect_index(CLI *c) {
     unsigned i;
     SOCKADDR_UNION addr, *ptr;
     socklen_t len;
+    char *addr_txt;
 
     if(c->ssl && SSL_session_reused(c->ssl)) {
         enter_critical_section(CRIT_ADDR);
         ptr=SSL_SESSION_get_ex_data(SSL_get_session(c->ssl), index_addr);
-        if(ptr) { /* address was copied, ptr itself is no longer valid */
+        if(ptr) {
             len=addr_len(ptr);
             memcpy(&addr, ptr, (size_t)len);
             leave_critical_section(CRIT_ADDR);
+            /* address was copied, ptr itself is no longer valid */
             for(i=0; i<c->connect_addr.num; ++i) {
                 if(addr_len(&c->connect_addr.addr[i])==len &&
                         !memcmp(&c->connect_addr.addr[i],
                             &addr, (size_t)len)) {
-                    s_log(LOG_INFO, "Cached address reused");
+                    addr_txt=s_ntop(&addr, len);
+                    s_log(LOG_INFO, "persistence: %s reused", addr_txt);
+                    str_free(addr_txt);
                     return i;
                 }
             }
-            s_log(LOG_ERR, "Cached address not configured");
+            addr_txt=s_ntop(&addr, len);
+            s_log(LOG_INFO, "persistence: %s not available", addr_txt);
+            str_free(addr_txt);
         } else {
             leave_critical_section(CRIT_ADDR);
-            s_log(LOG_NOTICE, "No cached address found");
+            s_log(LOG_NOTICE, "persistence: No cached address found");
         }
     }
-    i=*c->connect_addr.rr_ptr;
-    /* the race condition here can be safely ignored */
+
     if(c->opt->failover==FAILOVER_RR) {
+        /* the race condition here can be safely ignored */
+        i=*c->connect_addr.rr_ptr;
         *c->connect_addr.rr_ptr=(i+1)%c->connect_addr.num;
-        s_log(LOG_INFO, "Failover strategy: round-robin");
+        s_log(LOG_INFO, "failover: round-robin, starting at entry #%d", i);
     } else {
-        s_log(LOG_INFO, "Failover strategy: priority");
+        i=0;
+        s_log(LOG_INFO, "failover: priority, starting at entry #0");
     }
     return i;
 }

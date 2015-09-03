@@ -102,12 +102,13 @@ typedef struct sockaddr_list {                          /* list of addresses */
     SOCKADDR_UNION *addr;                           /* the list of addresses */
     unsigned *rr_ptr, rr_val;             /* current address for round-robin */
     unsigned num;                             /* how many addresses are used */
+    int passive;                                         /* listening socket */
     NAME_LIST *names;                          /* a list of unresolved names */
 } SOCKADDR_LIST;
 
 #ifndef OPENSSL_NO_COMP
 typedef enum {
-    COMP_NONE, COMP_DEFLATE, COMP_ZLIB, COMP_RLE
+    COMP_NONE, COMP_DEFLATE, COMP_ZLIB
 } COMP_TYPE;
 #endif /* !defined(OPENSSL_NO_COMP) */
 
@@ -290,6 +291,9 @@ typedef struct service_options_struct {
 #ifndef OPENSSL_NO_OCSP
         unsigned aia:1;                 /* Authority Information Access */
 #endif /* !defined(OPENSSL_NO_OCSP) */
+#ifndef OPENSSL_NO_DH
+        unsigned dh_needed:1;
+#endif /* OPENSSL_NO_DH */
     } option;
 } SERVICE_OPTIONS;
 
@@ -413,6 +417,15 @@ void child_status(void);  /* dead libwrap or 'exec' process detected */
 #endif
 void stunnel_info(int);
 
+/**************************************** prototypes for options.c */
+
+extern char *configuration_file;
+
+int options_cmdline(char *, char *);
+int options_parse(CONF_TYPE);
+void options_defaults(void);
+void options_apply(void);
+
 /**************************************** prototypes for fd.c */
 
 #ifndef USE_FORK
@@ -456,6 +469,14 @@ char *s_strerror(int);
 
 int pty_allocate(int *, int *, char *);
 
+/**************************************** prototypes for dhparam.c */
+
+DH *get_dh2048(void);
+
+/**************************************** prototypes for cron.c */
+
+int cron_init(void);
+
 /**************************************** prototypes for ssl.c */
 
 extern int index_cli, index_opt, index_redirect, index_addr;
@@ -463,21 +484,17 @@ extern int index_cli, index_opt, index_redirect, index_addr;
 int ssl_init(void);
 int ssl_configure(GLOBAL_OPTIONS *);
 
-/**************************************** prototypes for options.c */
-
-extern char *configuration_file;
-
-int options_cmdline(char *, char *);
-int options_parse(CONF_TYPE);
-void options_defaults(void);
-void options_apply(void);
-
 /**************************************** prototypes for ctx.c */
 
 typedef struct {
     SERVICE_OPTIONS *section;
     char pass[PEM_BUFSIZE];
 } UI_DATA;
+
+#ifndef OPENSSL_NO_DH
+extern DH *dh_params;
+extern int dh_needed;
+#endif /* OPENSSL_NO_DH */
 
 int context_init(SERVICE_OPTIONS *);
 #ifndef OPENSSL_NO_PSK
@@ -497,11 +514,13 @@ s_poll_set *s_poll_alloc(void);
 void s_poll_free(s_poll_set *);
 void s_poll_init(s_poll_set *);
 void s_poll_add(s_poll_set *, SOCKET, int, int);
+void s_poll_remove(s_poll_set *, SOCKET);
 int s_poll_canread(s_poll_set *, SOCKET);
 int s_poll_canwrite(s_poll_set *, SOCKET);
 int s_poll_hup(s_poll_set *, SOCKET);
 int s_poll_rdhup(s_poll_set *, SOCKET);
 int s_poll_wait(s_poll_set *, int, int);
+void s_poll_dump(s_poll_set *, int);
 
 #ifdef USE_WIN32
 #define SIGNAL_RELOAD_CONFIG    1
@@ -555,13 +574,13 @@ char *protocol(CLI *, SERVICE_OPTIONS *opt, const PHASE);
 
 void resolver_init();
 
-unsigned name2addr(SOCKADDR_UNION *, char *, char *);
-unsigned hostport2addr(SOCKADDR_UNION *, char *, char *);
+unsigned name2addr(SOCKADDR_UNION *, char *, int);
+unsigned hostport2addr(SOCKADDR_UNION *, char *, char *, int);
 
-unsigned name2addrlist(SOCKADDR_LIST *, char *, char *);
+unsigned name2addrlist(SOCKADDR_LIST *, char *);
 unsigned hostport2addrlist(SOCKADDR_LIST *, char *, char *);
 
-void addrlist_clear(SOCKADDR_LIST *);
+void addrlist_clear(SOCKADDR_LIST *, int);
 unsigned addrlist_dup(SOCKADDR_LIST *, const SOCKADDR_LIST *);
 unsigned addrlist_resolve(SOCKADDR_LIST *);
 
@@ -611,6 +630,9 @@ typedef enum {
     CRIT_LIBWRAP,                           /* libwrap.c */
 #endif
     CRIT_LOG, CRIT_ID, CRIT_LEAK,           /* log.c */
+#ifndef OPENSSL_NO_DH
+    CRIT_DH,                                /* ctx.c */
+#endif /* OPENSSL_NO_DH */
     CRIT_SECTIONS                           /* number of critical sections */
 } SECTION_CODE;
 
@@ -629,7 +651,7 @@ typedef struct CONTEXT_STRUCTURE {
     int ready; /* number of ready file descriptors */
     time_t finish; /* when to finish poll() for this context */
     struct CONTEXT_STRUCTURE *next; /* next context on a list */
-    void *tls; /* thread local storage for str.c */
+    void *tls; /* thread local storage for tls.c */
 } CONTEXT;
 extern CONTEXT *ready_head, *ready_tail;
 extern CONTEXT *waiting_head, *waiting_tail;
