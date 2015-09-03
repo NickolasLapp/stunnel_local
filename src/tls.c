@@ -110,11 +110,7 @@ void tls_set(TLS_DATA *tls_data) {
     if(ready_head)
         ready_head->tls=tls_data;
     else /* ucontext threads not initialized */
-<<<<<<< HEAD
-        global_tls=tls;
-=======
         global_tls=tls_data;
->>>>>>> 8b170676657f408ce0e57b36e52564de64557ae8
 }
 
 TLS_DATA *tls_get() {
@@ -183,12 +179,8 @@ TLS_DATA *tls_get() {
 
 NOEXPORT void free_function(void *ptr) {
     /* CRYPTO_set_mem_ex_functions() needs a function rather than a macro */
-<<<<<<< HEAD
-    str_free(ptr);
-=======
     /* unfortunately, OpenSSL provides no file:line information here */
     str_free_debug(ptr, "OpenSSL", 0);
->>>>>>> 8b170676657f408ce0e57b36e52564de64557ae8
 }
 
 /* end of tls.c */

@@ -398,13 +398,12 @@ libstunnel_la_SOURCES = $(shared_sources)
 libstunnel_la_LDFLAGS = -avoid-version
 
 # Red Hat "by design" bug #82369
-
-# Additional preprocesor definitions
-stunnel_CPPFLAGS = -I/usr/kerberos/include -I$(SSLDIR)/include \
-	-DLIBDIR='"$(pkglibdir)"' -DCONFDIR='"$(sysconfdir)/stunnel"'
+stunnel_CPPFLAGS = -I/usr/kerberos/include $(am__append_1) \
+	$(am__append_2) -DLIBDIR='"$(pkglibdir)"' \
+	-DCONFDIR='"$(sysconfdir)/stunnel"'
+@WOLFSSL_FALSE@stunnel_LDFLAGS = -L$(SSLDIR)/lib64 -L$(SSLDIR)/lib -lssl -lcrypto
 
 # SSL library
-@WOLFSSL_FALSE@stunnel_LDFLAGS = -L$(SSLDIR)/lib64 -L$(SSLDIR)/lib -lssl -lcrypto
 @WOLFSSL_TRUE@stunnel_LDFLAGS = -L$(SSLDIR)/lib64 -L$(SSLDIR)/lib -lwolfssl
 stunnel_exe_SOURCES = $(common_headers) $(common_sources) $(win32_gui_sources)
 tstunnel_exe_SOURCES = $(common_headers) $(common_sources) $(win32_cli_sources)

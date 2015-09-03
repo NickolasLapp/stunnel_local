@@ -274,8 +274,6 @@ NOEXPORT int matches_wildcard(char *servername, char *pattern) {
 #ifndef OPENSSL_NO_DH
 
 NOEXPORT int dh_init(SERVICE_OPTIONS *section) {
-    DH *dh=NULL;
-
     s_log(LOG_DEBUG, "DH initialization");
 
 #ifdef WITH_WOLFSSL
@@ -286,7 +284,7 @@ NOEXPORT int dh_init(SERVICE_OPTIONS *section) {
 		s_log(LOG_DEBUG, "Error loading DH params from file: %s", section->cert);
 	}
 #else
-
+    DH *dh=NULL;
 #ifndef OPENSSL_NO_ENGINE
     if(!section->engine) /* cert is a file and not an identifier */
 #endif
@@ -309,7 +307,7 @@ NOEXPORT int dh_init(SERVICE_OPTIONS *section) {
 }
 
 #ifndef WITH_WOLFSSL
-NOEXPORT DH *read_dh(char *cert) {
+NOEXPORT DH *dh_read(char *cert) {
     DH *dh;
     BIO *bio;
 
